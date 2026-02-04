@@ -2,6 +2,7 @@ import { DomObserver } from "../../../utils/dom/DomObserver";
 
 interface VideoItem {
   readonly element: HTMLElement;
+  readonly videoId: string;
   readonly ageInMinutes: number;
 }
 
@@ -12,9 +13,11 @@ interface TimeParseResult {
 
 export class VideoSorter {
   private static readonly VIDEO_CONTAINER_SELECTOR = "ytd-rich-grid-renderer #contents";
-  private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item]):not([hidden])";
+  private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item])";
+  private static readonly VIDEO_LINK_SELECTOR = "a#thumbnail[href*='watch']";
   private static readonly METADATA_SELECTOR = ".yt-content-metadata-view-model__metadata-text";
-  private static readonly DEBOUNCE_MS = 1000;
+  private static readonly DEBOUNCE_MS = 2000;
+  private static readonly SORTED_ATTR = "data-webme-sorted";
 
   private static readonly TIME_PATTERNS: ReadonlyMap<string, number> = new Map( [
     [ "segundo", 1 / 60 ],
@@ -50,11 +53,13 @@ export class VideoSorter {
   private domObserver: DomObserver | null;
   private isProcessing: boolean;
   private isEnabled: boolean;
+  private lastVideoCount: number;
 
   constructor() {
     this.domObserver = null;
     this.isProcessing = false;
     this.isEnabled = true;
+    this.lastVideoCount = 0;
   }
 
   initialize(): void {
@@ -62,7 +67,7 @@ export class VideoSorter {
       return;
     }
     this.setupObserver();
-    this.sortVideos();
+    setTimeout( () => this.sortVideos(), 1000 );
   }
 
   cleanup(): void {
@@ -71,10 +76,11 @@ export class VideoSorter {
   }
 
   reset(): void {
-    if ( !this.isEnabled ) {
-      return;
+    this.lastVideoCount = 0;
+    this.clearSortedMarkers();
+    if ( this.isEnabled ) {
+      setTimeout( () => this.sortVideos(), 1000 );
     }
-    this.sortVideos();
   }
 
   setEnabled( enabled: boolean ): void {
@@ -83,6 +89,13 @@ export class VideoSorter {
       this.initialize();
     } else {
       this.stopObserver();
+    }
+  }
+
+  private clearSortedMarkers(): void {
+    const sorted = document.querySelectorAll( `[${ VideoSorter.SORTED_ATTR }]` );
+    for ( const el of sorted ) {
+      el.removeAttribute( VideoSorter.SORTED_ATTR );
     }
   }
 
@@ -117,13 +130,25 @@ export class VideoSorter {
 
   private resetState(): void {
     this.isProcessing = false;
+    this.lastVideoCount = 0;
   }
 
   private handleMutation(): void {
-    if ( !this.isEnabled ) {
+    if ( !this.isEnabled || this.isProcessing ) {
       return;
     }
-    this.sortVideos();
+
+    const container = document.querySelector( VideoSorter.VIDEO_CONTAINER_SELECTOR );
+    if ( !( container instanceof HTMLElement ) ) {
+      return;
+    }
+
+    const currentCount = container.querySelectorAll( VideoSorter.VIDEO_ITEM_SELECTOR ).length;
+    const hasNewContent = currentCount > this.lastVideoCount;
+
+    if ( hasNewContent ) {
+      this.sortVideos();
+    }
   }
 
   private sortVideos(): void {
@@ -157,12 +182,49 @@ export class VideoSorter {
   private performSort( container: HTMLElement ): void {
     const videoItems = this.collectVideoItems( container );
 
+    this.lastVideoCount = videoItems.length;
+
     if ( videoItems.length < 2 ) {
       return;
     }
 
+    const unsortedItems = videoItems.filter(
+      ( item ) => !item.element.hasAttribute( VideoSorter.SORTED_ATTR )
+    );
+
+    if ( unsortedItems.length === 0 ) {
+      return;
+    }
+
     const sortedItems = this.sortByAge( videoItems );
+
+    if ( !this.needsReorder( videoItems, sortedItems ) ) {
+      this.markAllSorted( videoItems );
+      return;
+    }
+
     this.reorderElements( container, sortedItems );
+    this.markAllSorted( sortedItems );
+  }
+
+  private needsReorder( current: VideoItem[], sorted: VideoItem[] ): boolean {
+    for ( let i = 0; i < current.length; i++ ) {
+      const currentItem = current[ i ];
+      const sortedItem = sorted[ i ];
+      if ( currentItem === undefined || sortedItem === undefined ) {
+        return true;
+      }
+      if ( currentItem.videoId !== sortedItem.videoId ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private markAllSorted( items: VideoItem[] ): void {
+    for ( const item of items ) {
+      item.element.setAttribute( VideoSorter.SORTED_ATTR, "true" );
+    }
   }
 
   private collectVideoItems( container: HTMLElement ): VideoItem[] {
@@ -178,6 +240,11 @@ export class VideoSorter {
         continue;
       }
 
+      const videoId = this.extractVideoId( element );
+      if ( videoId === null ) {
+        continue;
+      }
+
       const ageInMinutes = this.extractAge( element );
       if ( ageInMinutes === null ) {
         continue;
@@ -185,11 +252,27 @@ export class VideoSorter {
 
       items.push( {
         element,
+        videoId,
         ageInMinutes,
       } );
     }
 
     return items;
+  }
+
+  private extractVideoId( element: HTMLElement ): string | null {
+    const link = element.querySelector( VideoSorter.VIDEO_LINK_SELECTOR );
+    if ( !( link instanceof HTMLAnchorElement ) ) {
+      return null;
+    }
+
+    const href = link.href;
+    const match = href.match( /[?&]v=([^&]+)/ );
+    if ( match === null || match[ 1 ] === undefined ) {
+      return null;
+    }
+
+    return match[ 1 ];
   }
 
   private extractAge( element: HTMLElement ): number | null {
