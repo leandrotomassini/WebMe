@@ -1,25 +1,31 @@
 import type { ISiteStrategy } from "../../core/interfaces/ISiteStrategy";
 import { VideoSorter } from "./features/VideoSorter";
+import { ShortsHider } from "./features/ShortsHider";
+import { PlaylistHider } from "./features/PlaylistHider";
 
 export class YoutubeStrategy implements ISiteStrategy {
   readonly hostname = "youtube.com";
 
   private readonly videoSorter: VideoSorter;
+  private readonly shortsHider: ShortsHider;
+  private readonly playlistHider: PlaylistHider;
   private readonly boundNavigationHandler: () => void;
 
   constructor() {
     this.videoSorter = new VideoSorter();
+    this.shortsHider = new ShortsHider();
+    this.playlistHider = new PlaylistHider();
     this.boundNavigationHandler = this.handleNavigation.bind( this );
   }
 
   initialize(): void {
     this.setupNavigationListener();
-    this.videoSorter.initialize();
+    this.initializeFeatures();
   }
 
   cleanup(): void {
     this.removeNavigationListener();
-    this.videoSorter.cleanup();
+    this.cleanupFeatures();
   }
 
   private setupNavigationListener(): void {
@@ -31,6 +37,24 @@ export class YoutubeStrategy implements ISiteStrategy {
   }
 
   private handleNavigation(): void {
+    this.resetFeatures();
+  }
+
+  private initializeFeatures(): void {
+    this.shortsHider.initialize();
+    this.playlistHider.initialize();
+    this.videoSorter.initialize();
+  }
+
+  private cleanupFeatures(): void {
+    this.shortsHider.cleanup();
+    this.playlistHider.cleanup();
+    this.videoSorter.cleanup();
+  }
+
+  private resetFeatures(): void {
+    this.shortsHider.reset();
+    this.playlistHider.reset();
     this.videoSorter.reset();
   }
 }
