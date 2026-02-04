@@ -1,31 +1,48 @@
 import type { ISiteStrategy } from "../../core/interfaces/ISiteStrategy";
 import { VideoSorter } from "./features/VideoSorter";
-import { ShortsHider } from "./features/ShortsHider";
-import { PlaylistHider } from "./features/PlaylistHider";
+import { SettingsManager } from "./settings/SettingsManager";
+import { StyleInjector } from "./settings/StyleInjector";
+import { SettingsUI } from "./settings/SettingsUI";
 
 export class YoutubeStrategy implements ISiteStrategy {
   readonly hostname = "youtube.com";
 
+  private readonly settingsManager: SettingsManager;
+  private readonly styleInjector: StyleInjector;
+  private readonly settingsUI: SettingsUI;
   private readonly videoSorter: VideoSorter;
-  private readonly shortsHider: ShortsHider;
-  private readonly playlistHider: PlaylistHider;
   private readonly boundNavigationHandler: () => void;
+  private unsubscribe: ( () => void ) | null;
 
   constructor() {
+    this.settingsManager = new SettingsManager();
+    this.styleInjector = new StyleInjector();
+    this.settingsUI = new SettingsUI( this.settingsManager );
     this.videoSorter = new VideoSorter();
-    this.shortsHider = new ShortsHider();
-    this.playlistHider = new PlaylistHider();
     this.boundNavigationHandler = this.handleNavigation.bind( this );
+    this.unsubscribe = null;
   }
 
   initialize(): void {
+    this.applyInitialSettings();
     this.setupNavigationListener();
-    this.initializeFeatures();
+    this.setupSettingsListener();
+    this.initializeComponents();
   }
 
   cleanup(): void {
     this.removeNavigationListener();
-    this.cleanupFeatures();
+    this.cleanupComponents();
+    if ( this.unsubscribe !== null ) {
+      this.unsubscribe();
+    }
+  }
+
+  private applyInitialSettings(): void {
+    const settings = this.settingsManager.getSettings();
+    this.styleInjector.initialize();
+    this.styleInjector.updateStyles( settings );
+    this.videoSorter.setEnabled( settings.sortByDate );
   }
 
   private setupNavigationListener(): void {
@@ -36,25 +53,29 @@ export class YoutubeStrategy implements ISiteStrategy {
     window.removeEventListener( "yt-navigate-finish", this.boundNavigationHandler );
   }
 
-  private handleNavigation(): void {
-    this.resetFeatures();
+  private setupSettingsListener(): void {
+    this.unsubscribe = this.settingsManager.subscribe( ( settings ) => {
+      this.styleInjector.updateStyles( settings );
+      this.videoSorter.setEnabled( settings.sortByDate );
+    } );
   }
 
-  private initializeFeatures(): void {
-    this.shortsHider.initialize();
-    this.playlistHider.initialize();
+  private handleNavigation(): void {
+    this.videoSorter.reset();
+    setTimeout( () => {
+      this.settingsUI.cleanup();
+      this.settingsUI.initialize();
+    }, 500 );
+  }
+
+  private initializeComponents(): void {
+    this.settingsUI.initialize();
     this.videoSorter.initialize();
   }
 
-  private cleanupFeatures(): void {
-    this.shortsHider.cleanup();
-    this.playlistHider.cleanup();
+  private cleanupComponents(): void {
+    this.settingsUI.cleanup();
+    this.styleInjector.cleanup();
     this.videoSorter.cleanup();
-  }
-
-  private resetFeatures(): void {
-    this.shortsHider.reset();
-    this.playlistHider.reset();
-    this.videoSorter.reset();
   }
 }

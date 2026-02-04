@@ -12,7 +12,7 @@ interface TimeParseResult {
 
 export class VideoSorter {
   private static readonly VIDEO_CONTAINER_SELECTOR = "ytd-rich-grid-renderer #contents";
-  private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item])";
+  private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item]):not([hidden])";
   private static readonly METADATA_SELECTOR = ".yt-content-metadata-view-model__metadata-text";
   private static readonly DEBOUNCE_MS = 1000;
 
@@ -49,15 +49,18 @@ export class VideoSorter {
 
   private domObserver: DomObserver | null;
   private isProcessing: boolean;
-  private sortedVideoIds: Set<string>;
+  private isEnabled: boolean;
 
   constructor() {
     this.domObserver = null;
     this.isProcessing = false;
-    this.sortedVideoIds = new Set<string>();
+    this.isEnabled = true;
   }
 
   initialize(): void {
+    if ( !this.isEnabled ) {
+      return;
+    }
     this.setupObserver();
     this.sortVideos();
   }
@@ -68,8 +71,19 @@ export class VideoSorter {
   }
 
   reset(): void {
-    this.sortedVideoIds.clear();
+    if ( !this.isEnabled ) {
+      return;
+    }
     this.sortVideos();
+  }
+
+  setEnabled( enabled: boolean ): void {
+    this.isEnabled = enabled;
+    if ( enabled ) {
+      this.initialize();
+    } else {
+      this.stopObserver();
+    }
   }
 
   private setupObserver(): void {
@@ -103,15 +117,17 @@ export class VideoSorter {
 
   private resetState(): void {
     this.isProcessing = false;
-    this.sortedVideoIds.clear();
   }
 
   private handleMutation(): void {
+    if ( !this.isEnabled ) {
+      return;
+    }
     this.sortVideos();
   }
 
   private sortVideos(): void {
-    if ( this.isProcessing ) {
+    if ( this.isProcessing || !this.isEnabled ) {
       return;
     }
 
@@ -155,6 +171,10 @@ export class VideoSorter {
 
     for ( const element of elements ) {
       if ( !( element instanceof HTMLElement ) ) {
+        continue;
+      }
+
+      if ( element.style.display === "none" ) {
         continue;
       }
 
