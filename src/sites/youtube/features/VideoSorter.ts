@@ -15,9 +15,10 @@ export class VideoSorter {
   private static readonly VIDEO_CONTAINER_SELECTOR = "ytd-rich-grid-renderer #contents";
   private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item])";
   private static readonly VIDEO_LINK_SELECTOR = "a#thumbnail[href*='watch']";
-  private static readonly METADATA_SELECTOR = "#metadata-line span, .yt-content-metadata-view-model__metadata-text";
+  private static readonly METADATA_SELECTOR = "#metadata-line span, .yt-content-metadata-view-model__metadata-text, #video-subtitle span";
   private static readonly DEBOUNCE_MS = 3000;
   private static readonly SORTED_ATTR = "data-webme-sorted";
+  private static readonly AGE_ATTR = "data-webme-age";
 
   private static readonly TIME_PATTERNS: ReadonlyMap<string, number> = new Map( [
     [ "segundo", 1 / 60 ],
@@ -53,15 +54,13 @@ export class VideoSorter {
   private domObserver: DomObserver | null;
   private isProcessing: boolean;
   private isEnabled: boolean;
-  private lastVideoCount: number;
-  private sortedOnce: boolean;
+  private processedVideoIds: Set<string>;
 
   constructor() {
     this.domObserver = null;
     this.isProcessing = false;
     this.isEnabled = true;
-    this.lastVideoCount = 0;
-    this.sortedOnce = false;
+    this.processedVideoIds = new Set();
   }
 
   initialize(): void {
@@ -69,7 +68,7 @@ export class VideoSorter {
       return;
     }
     this.setupObserver();
-    setTimeout( () => this.sortVideos(), 2000 );
+    setTimeout( () => this.sortVideos(), 3000 );
   }
 
   cleanup(): void {
@@ -78,8 +77,7 @@ export class VideoSorter {
   }
 
   reset(): void {
-    this.lastVideoCount = 0;
-    this.sortedOnce = false;
+    this.processedVideoIds.clear();
     this.clearSortedMarkers();
     if ( this.isEnabled ) {
       setTimeout( () => this.sortVideos(), 2000 );
@@ -89,7 +87,7 @@ export class VideoSorter {
   setEnabled( enabled: boolean ): void {
     this.isEnabled = enabled;
     if ( enabled ) {
-      this.sortedOnce = false;
+      this.processedVideoIds.clear();
       this.initialize();
     } else {
       this.stopObserver();
@@ -100,6 +98,7 @@ export class VideoSorter {
     const sorted = document.querySelectorAll( `[${ VideoSorter.SORTED_ATTR }]` );
     for ( const el of sorted ) {
       el.removeAttribute( VideoSorter.SORTED_ATTR );
+      el.removeAttribute( VideoSorter.AGE_ATTR );
     }
   }
 
@@ -134,8 +133,7 @@ export class VideoSorter {
 
   private resetState(): void {
     this.isProcessing = false;
-    this.lastVideoCount = 0;
-    this.sortedOnce = false;
+    this.processedVideoIds.clear();
   }
 
   private handleMutation(): void {
@@ -143,18 +141,7 @@ export class VideoSorter {
       return;
     }
 
-    const container = document.querySelector( VideoSorter.VIDEO_CONTAINER_SELECTOR );
-    if ( !( container instanceof HTMLElement ) ) {
-      return;
-    }
-
-    const currentCount = container.querySelectorAll( VideoSorter.VIDEO_ITEM_SELECTOR ).length;
-    const hasNewContent = currentCount > this.lastVideoCount;
-
-    if ( hasNewContent ) {
-      this.sortedOnce = false;
-      this.sortVideos();
-    }
+    this.sortVideos();
   }
 
   private sortVideos(): void {
@@ -188,31 +175,24 @@ export class VideoSorter {
   private performSort( container: HTMLElement ): void {
     const videoItems = this.collectVideoItems( container );
 
-    this.lastVideoCount = videoItems.length;
-
     if ( videoItems.length < 2 ) {
       return;
     }
 
-    if ( this.sortedOnce ) {
-      const unsortedCount = videoItems.filter(
-        ( item ) => !item.element.hasAttribute( VideoSorter.SORTED_ATTR )
-      ).length;
-      if ( unsortedCount === 0 ) {
-        return;
-      }
+    const newVideos = videoItems.filter( ( v ) => !this.processedVideoIds.has( v.videoId ) );
+    if ( newVideos.length === 0 ) {
+      return;
     }
 
     const sortedItems = this.sortByAge( videoItems );
-    this.reorderElements( container, sortedItems );
-    this.markAllSorted( sortedItems );
-    this.sortedOnce = true;
-  }
 
-  private markAllSorted( items: VideoItem[] ): void {
-    for ( const item of items ) {
+    for ( const item of sortedItems ) {
+      this.processedVideoIds.add( item.videoId );
       item.element.setAttribute( VideoSorter.SORTED_ATTR, "true" );
+      item.element.setAttribute( VideoSorter.AGE_ATTR, String( item.ageInMinutes ) );
     }
+
+    this.reorderElements( sortedItems );
   }
 
   private collectVideoItems( container: HTMLElement ): VideoItem[] {
@@ -322,13 +302,49 @@ export class VideoSorter {
     return [ ...items ].sort( ( a, b ) => a.ageInMinutes - b.ageInMinutes );
   }
 
-  private reorderElements( container: HTMLElement, sortedItems: VideoItem[] ): void {
-    for ( let i = sortedItems.length - 1; i >= 0; i-- ) {
-      const item = sortedItems[ i ];
-      if ( item === undefined ) {
-        continue;
-      }
-      container.insertBefore( item.element, container.firstChild );
+  private reorderElements( sortedItems: VideoItem[] ): void {
+    if ( sortedItems.length === 0 ) {
+      return;
     }
+
+    const firstItem = sortedItems[ 0 ];
+    if ( firstItem === undefined ) {
+      return;
+    }
+
+    const parent = firstItem.element.parentElement;
+    if ( parent === null ) {
+      return;
+    }
+
+    let referenceNode: Element | null = null;
+
+    for ( const item of sortedItems ) {
+      if ( referenceNode === null ) {
+        const firstNonVideo = this.findFirstNonVideoChild( parent );
+        if ( firstNonVideo !== null ) {
+          parent.insertBefore( item.element, firstNonVideo );
+        } else {
+          parent.appendChild( item.element );
+        }
+      } else {
+        const nextSibling = referenceNode.nextSibling;
+        if ( nextSibling !== null ) {
+          parent.insertBefore( item.element, nextSibling );
+        } else {
+          parent.appendChild( item.element );
+        }
+      }
+      referenceNode = item.element;
+    }
+  }
+
+  private findFirstNonVideoChild( parent: Element ): Element | null {
+    for ( const child of parent.children ) {
+      if ( !child.matches( VideoSorter.VIDEO_ITEM_SELECTOR ) ) {
+        return child;
+      }
+    }
+    return null;
   }
 }
