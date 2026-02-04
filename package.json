@@ -1,0 +1,17 @@
+{
+  "name": "webme",
+  "version": "0.1.0",
+  "description": "Make the internet yours. A Chrome extension to customize and style any website exactly how you see it.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.25",
+    "@types/chrome": "^0.0.260",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}
