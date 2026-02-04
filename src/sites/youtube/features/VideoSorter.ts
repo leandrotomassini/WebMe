@@ -15,8 +15,8 @@ export class VideoSorter {
   private static readonly VIDEO_CONTAINER_SELECTOR = "ytd-rich-grid-renderer #contents";
   private static readonly VIDEO_ITEM_SELECTOR = "ytd-rich-item-renderer:not([is-shelf-item])";
   private static readonly VIDEO_LINK_SELECTOR = "a#thumbnail[href*='watch']";
-  private static readonly METADATA_SELECTOR = ".yt-content-metadata-view-model__metadata-text";
-  private static readonly DEBOUNCE_MS = 2000;
+  private static readonly METADATA_SELECTOR = "#metadata-line span, .yt-content-metadata-view-model__metadata-text";
+  private static readonly DEBOUNCE_MS = 3000;
   private static readonly SORTED_ATTR = "data-webme-sorted";
 
   private static readonly TIME_PATTERNS: ReadonlyMap<string, number> = new Map( [
@@ -54,12 +54,14 @@ export class VideoSorter {
   private isProcessing: boolean;
   private isEnabled: boolean;
   private lastVideoCount: number;
+  private sortedOnce: boolean;
 
   constructor() {
     this.domObserver = null;
     this.isProcessing = false;
     this.isEnabled = true;
     this.lastVideoCount = 0;
+    this.sortedOnce = false;
   }
 
   initialize(): void {
@@ -67,7 +69,7 @@ export class VideoSorter {
       return;
     }
     this.setupObserver();
-    setTimeout( () => this.sortVideos(), 1000 );
+    setTimeout( () => this.sortVideos(), 2000 );
   }
 
   cleanup(): void {
@@ -77,15 +79,17 @@ export class VideoSorter {
 
   reset(): void {
     this.lastVideoCount = 0;
+    this.sortedOnce = false;
     this.clearSortedMarkers();
     if ( this.isEnabled ) {
-      setTimeout( () => this.sortVideos(), 1000 );
+      setTimeout( () => this.sortVideos(), 2000 );
     }
   }
 
   setEnabled( enabled: boolean ): void {
     this.isEnabled = enabled;
     if ( enabled ) {
+      this.sortedOnce = false;
       this.initialize();
     } else {
       this.stopObserver();
@@ -131,6 +135,7 @@ export class VideoSorter {
   private resetState(): void {
     this.isProcessing = false;
     this.lastVideoCount = 0;
+    this.sortedOnce = false;
   }
 
   private handleMutation(): void {
@@ -147,6 +152,7 @@ export class VideoSorter {
     const hasNewContent = currentCount > this.lastVideoCount;
 
     if ( hasNewContent ) {
+      this.sortedOnce = false;
       this.sortVideos();
     }
   }
@@ -188,37 +194,19 @@ export class VideoSorter {
       return;
     }
 
-    const unsortedItems = videoItems.filter(
-      ( item ) => !item.element.hasAttribute( VideoSorter.SORTED_ATTR )
-    );
-
-    if ( unsortedItems.length === 0 ) {
-      return;
+    if ( this.sortedOnce ) {
+      const unsortedCount = videoItems.filter(
+        ( item ) => !item.element.hasAttribute( VideoSorter.SORTED_ATTR )
+      ).length;
+      if ( unsortedCount === 0 ) {
+        return;
+      }
     }
 
     const sortedItems = this.sortByAge( videoItems );
-
-    if ( !this.needsReorder( videoItems, sortedItems ) ) {
-      this.markAllSorted( videoItems );
-      return;
-    }
-
     this.reorderElements( container, sortedItems );
     this.markAllSorted( sortedItems );
-  }
-
-  private needsReorder( current: VideoItem[], sorted: VideoItem[] ): boolean {
-    for ( let i = 0; i < current.length; i++ ) {
-      const currentItem = current[ i ];
-      const sortedItem = sorted[ i ];
-      if ( currentItem === undefined || sortedItem === undefined ) {
-        return true;
-      }
-      if ( currentItem.videoId !== sortedItem.videoId ) {
-        return true;
-      }
-    }
-    return false;
+    this.sortedOnce = true;
   }
 
   private markAllSorted( items: VideoItem[] ): void {
@@ -335,15 +323,12 @@ export class VideoSorter {
   }
 
   private reorderElements( container: HTMLElement, sortedItems: VideoItem[] ): void {
-    const fragment = document.createDocumentFragment();
-
-    for ( const item of sortedItems ) {
-      fragment.appendChild( item.element );
-    }
-
-    const firstVideoItem = container.querySelector( VideoSorter.VIDEO_ITEM_SELECTOR );
-    if ( firstVideoItem !== null ) {
-      container.insertBefore( fragment, firstVideoItem );
+    for ( let i = sortedItems.length - 1; i >= 0; i-- ) {
+      const item = sortedItems[ i ];
+      if ( item === undefined ) {
+        continue;
+      }
+      container.insertBefore( item.element, container.firstChild );
     }
   }
 }
